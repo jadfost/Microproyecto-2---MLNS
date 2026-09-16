@@ -1,7 +1,6 @@
 #  We ensure proper path handling in Python
 import Definitions
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
 
 from src.ModelController import ModelController
@@ -9,56 +8,67 @@ from src.ModelController import ModelController
 ### Setup and configuration
 
 st.set_page_config(
-    layout="centered", page_title="Image Classifier", page_icon="❄️"
+    layout="centered", page_title="Clasificador de ODS", page_icon="🌍"
 )
 
 ### My vars
 
-ctrl = ModelController()
+@st.cache_resource
+def get_controller():
+    return ModelController()
+
+
+ctrl = get_controller()
 
 ### My UI starting here
 
+st.title("🌍 Clasificador de textos según los ODS")
+st.write(
+    "Escribe o pega un texto libre (una noticia, un párrafo de un reporte, una opinión "
+    "ciudadana, etc.) y el modelo predecirá con cuál de los 17 Objetivos de Desarrollo "
+    "Sostenible (ODS) se relaciona más."
+)
+
 with st.form(key="my_form"):
-
-    uploaded_file = st.file_uploader(
-        "Choose a CSV file", accept_multiple_files=False, type="csv"
+    input_text = st.text_area(
+        "Texto a clasificar",
+        height=180,
+        placeholder="Por ejemplo: 'El acceso a agua potable sigue siendo limitado en "
+                    "las zonas rurales, lo que afecta la salud de miles de familias...'",
     )
 
-    submit_button = st.form_submit_button(label="Submit")
+    submit_button = st.form_submit_button(label="Predecir ODS")
 
-if submit_button and uploaded_file is not None:
-    input_df, is_valid = ctrl.load_input_data(uploaded_file)
-    st.session_state["input_df"] = input_df if is_valid else None
+if submit_button:
+    if input_text is None or input_text.strip() == "":
+        st.warning("⚠️ Por favor ingresa un texto antes de predecir.")
+    else:
+        st.session_state["input_text"] = input_text
 
-input_df = st.session_state.get("input_df")
+texto_guardado = st.session_state.get("input_text")
 
-if input_df is not None:
-    st.caption("✅ This is your data")
-    event = st.dataframe(
-        input_df,
-        on_select="rerun",
-        selection_mode="single-row",
-        use_container_width=True,
-    )
-    st.caption("▶ Please select a row")
+if texto_guardado:
+    st.caption("✅ Texto analizado")
+    st.write(texto_guardado)
 
-    if event is not None and event.selection.rows:        
-        current_row_index = event.selection.rows[0]
-        current_row = input_df.iloc[current_row_index]
+    ods_pred, ods_name, probabilidades = ctrl.predict(texto_guardado)
+    top_prob = probabilidades[ods_pred]
 
-        #TO-DO: Llama la clase de predicción para procesar la información
-        X, Y, Y_pred = None
-        #TO-DO: Obten el nombre de las clases
-        class_names = None
+    col1, col2 = st.columns([1, 2])
 
-        col1, col2 = st.columns([1, 2])  
+    with col1:
+        st.caption("🎯 Predicción")
+        st.metric("ODS predicho", f"ODS {ods_pred}")
+        st.metric("Confianza", f"{top_prob:.1%}")
 
-        with col1:
-            st.caption("🗣 Your Prediction")
-            #TO-DO
+    with col2:
+        st.caption("🗣 Objetivo de Desarrollo Sostenible")
+        st.success(f"**ODS {ods_pred} — {ods_name}**")
 
-        with col2:
-            st.caption("🎯 Your results")
-            #TO-DO
-            st.metric("Real", "<Insert Value>")
-            st.metric("Prediction", "<Insert Value>")
+    st.caption("📊 Probabilidad estimada por ODS (top 5)")
+    top5 = dict(list(probabilidades.items())[:5])
+    df_probs = pd.DataFrame({
+        "ODS": [f"ODS {k}" for k in top5.keys()],
+        "Probabilidad": list(top5.values()),
+    }).set_index("ODS")
+    st.bar_chart(df_probs)

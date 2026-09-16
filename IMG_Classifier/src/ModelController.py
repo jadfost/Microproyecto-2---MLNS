@@ -1,12 +1,11 @@
 import Definitions
 
-import numpy as np
 import os.path as osp
-import pandas as pd
-from io import StringIO
+import joblib
+import numpy as np
 
-#TO-DO. Importar la libreria joblib
 from src.DataPreprocessing import DataPreprocessing
+
 
 class ModelController:
 
@@ -14,50 +13,54 @@ class ModelController:
         print("ModelController.__init__ ->")
         # Asegura en una variable la ruta de los modelos
         self.model_path = osp.join(Definitions.ROOT_DIR, "resources/models")
-        # Almacena la ruta de cada modelo en una variable        
-        self.pca_path = osp.join(self.model_path, "pca.joblib")
-        self.scaler_path = osp.join(self.model_path, "scaler.joblib")
+
+        # Rutas de cada artefacto del pipeline (TF-IDF -> SVD/LSA -> clasificador)
+        self.tfidf_path = osp.join(self.model_path, "tfidf.joblib")
+        self.svd_path = osp.join(self.model_path, "svd.joblib")
         self.model_path = osp.join(self.model_path, "model.joblib")
 
-        #TO-DO: Cargar los modelos
-        self.pca = None
-        self.scaler = None
-        self.model = None
+        # Carga de los artefactos entrenados
+        self.tfidf = joblib.load(self.tfidf_path)
+        self.svd = joblib.load(self.svd_path)
+        self.model = joblib.load(self.model_path)
 
-        # Inicializar variables
-        self.input_df = ""
-        # Clase de preprocesamiento de la información
+        # Clase de preprocesamiento de la información (limpieza de texto)
         self.d_processing = DataPreprocessing()
 
-    def validate_data(self, df):
-        #Compara los nombres de las columnas con el archivo
-        return self.d_processing.get_columns().issubset(set(df.columns))
-    
     def get_categories(self):
         print("ModelController.get_categories ->")
-        return ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z']    
+        return self.d_processing.get_categories()
 
-    def load_input_data(self, input_data):
-        print("ModelController.load_input_data ->")
-        try:
-            input_data_str = StringIO(input_data.getvalue().decode("utf-8"))
-            self.input_df = pd.read_csv(input_data_str)
-            is_valid = self.validate_data(self.input_df)
-            return self.input_df, is_valid
-
-        except:
-            raise("Ocurrió un error al leer la información de entrada")
-
-    def predict(self, data):
+    def predict(self, texto: str):
+        """Recibe un texto libre y devuelve:
+        - ods_pred: número de ODS predicho (1-17)
+        - ods_name: nombre del ODS predicho
+        - probabilidades: diccionario {numero_ods: probabilidad} ordenado desc.
+        """
         print("ModelController.predict ->")
-        X = data[1:].to_numpy()
-        Y = data.iloc[0]
-        #TO-DO: Escala los datos
-        X_scaled = None
-        #TO-DO: Reduce los datos
-        X_reduced = None
-        #TO-DO: Genera la predicción
-        y_pred = None
-        
-        return X, Y, y_pred
 
+        # 1) Limpieza de texto (mismo preprocesamiento usado en el entrenamiento)
+        texto_limpio = self.d_processing.transform(texto)
+
+        # 2) Vectorización TF-IDF
+        X_tfidf = self.tfidf.transform([texto_limpio])
+
+        # 3) Reducción de dimensionalidad (LSA / TruncatedSVD)
+        X_reduced = self.svd.transform(X_tfidf)
+
+        # 4) Predicción y probabilidades calibradas
+        y_pred = self.model.predict(X_reduced)[0]
+        proba = self.model.predict_proba(X_reduced)[0]
+
+        categorias = self.get_categories()
+        probabilidades = {
+            int(clase): float(p)
+            for clase, p in sorted(
+                zip(self.model.classes_, proba), key=lambda x: x[1], reverse=True
+            )
+        }
+
+        ods_pred = int(y_pred)
+        ods_name = categorias.get(ods_pred, "Desconocido")
+
+        return ods_pred, ods_name, probabilidades
